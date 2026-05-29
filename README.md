@@ -1,6 +1,6 @@
 # Projet Machine Learning
 
-Projet complet de classification binaire sur le jeu de donnees Breast Cancer Wisconsin Original, utilise ici dans une version plus brute que le dataset integre a `scikit-learn`.
+Projet complet de classification binaire sur le jeu de donnees Breast Cancer Wisconsin Original.
 
 ## Objectif
 
