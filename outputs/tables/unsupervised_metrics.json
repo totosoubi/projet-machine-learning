@@ -1,0 +1,10 @@
+{
+  "pca_2_components_variance": 0.6313877765595589,
+  "pca_components_for_95_percent_variance": 10,
+  "kmeans_train_adjusted_rand_index": 0.6622066991321112,
+  "kmeans_test_adjusted_rand_index": 0.6169411122655668,
+  "kmeans_train_normalized_mutual_info": 0.5403921739486305,
+  "kmeans_test_normalized_mutual_info": 0.5037397294806727,
+  "kmeans_train_silhouette": 0.3432356203274449,
+  "kmeans_test_silhouette": 0.3173877785996526
+}
