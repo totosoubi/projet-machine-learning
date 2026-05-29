@@ -17,7 +17,6 @@ import pandas as pd
 from sklearn.base import clone
 from sklearn.cluster import KMeans
 from sklearn.compose import ColumnTransformer
-from sklearn.datasets import load_breast_cancer
 from sklearn.decomposition import PCA
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
@@ -51,10 +50,27 @@ FIGURE_DIR = OUTPUT_DIR / "figures"
 TABLE_DIR = OUTPUT_DIR / "tables"
 MODEL_DIR = ROOT / "models"
 REPORT_PATH = ROOT / "reports" / "rapport_projet_machine_learning.md"
+DATA_DIR = ROOT / "data" / "raw"
+RAW_DATA_PATH = DATA_DIR / "breast-cancer-wisconsin.data"
+
+RAW_COLUMNS = [
+    "sample_code_number",
+    "clump_thickness",
+    "uniformity_cell_size",
+    "uniformity_cell_shape",
+    "marginal_adhesion",
+    "single_epithelial_cell_size",
+    "bare_nuclei",
+    "bland_chromatin",
+    "normal_nucleoli",
+    "mitoses",
+    "class",
+]
+FEATURE_COLUMNS = RAW_COLUMNS[1:-1]
 
 
 def ensure_directories() -> None:
-    for directory in [FIGURE_DIR, TABLE_DIR, MODEL_DIR, REPORT_PATH.parent]:
+    for directory in [DATA_DIR, FIGURE_DIR, TABLE_DIR, MODEL_DIR, REPORT_PATH.parent]:
         directory.mkdir(parents=True, exist_ok=True)
 
 
@@ -65,14 +81,23 @@ def save_fig(path: Path) -> None:
 
 
 def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, list[str]]:
-    dataset = load_breast_cancer(as_frame=True)
-    features = dataset.data.copy()
-    target = (dataset.target == 0).astype(int)
+    if not RAW_DATA_PATH.exists():
+        raise FileNotFoundError(
+            f"Fichier brut introuvable: {RAW_DATA_PATH}. "
+            "Telecharger le dataset UCI Breast Cancer Wisconsin Original dans data/raw/."
+        )
+
+    df = pd.read_csv(RAW_DATA_PATH, header=None, names=RAW_COLUMNS, na_values="?")
+    for column in FEATURE_COLUMNS + ["class"]:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    target = (df["class"] == 4).astype(int)
     target.name = "target_malignant"
 
-    df = features.copy()
     df["diagnosis"] = np.where(target == 1, "malignant", "benign")
     df["target_malignant"] = target
+    df["raw_class"] = df["class"]
+    features = df[FEATURE_COLUMNS].copy()
     return df, features, target, list(features.columns)
 
 
@@ -128,6 +153,8 @@ def run_eda(df: pd.DataFrame, feature_names: list[str]) -> dict[str, Any]:
         "n_rows": int(df.shape[0]),
         "n_features": len(feature_names),
         "missing_total": int(missing.sum()),
+        "missing_features": missing[missing > 0].to_dict(),
+        "duplicate_sample_ids": int(df["sample_code_number"].duplicated().sum()),
         "class_counts": class_counts.to_dict(orient="records"),
         "top_correlations": corr_with_target.head(8).round(3).to_dict(),
         "top_features": top_features,
@@ -521,13 +548,19 @@ def build_report(
     best_row = test_results[test_results["model"] == best_model_name].iloc[0]
     top_corr = ", ".join([f"{feature} ({value:.3f})" for feature, value in eda_summary["top_correlations"].items()])
 
+    missing_features_text = (
+        ", ".join([f"{feature}: {int(count)}" for feature, count in eda_summary["missing_features"].items()])
+        if eda_summary["missing_features"]
+        else "aucune variable"
+    )
+
     report = f"""# Projet Machine Learning - Classification de tumeurs mammaires
 
 ## 1. Probleme
 
 ### Contexte
 
-Le cancer du sein est un cas d'usage classique de classification binaire : a partir de mesures numeriques calculees sur des noyaux cellulaires, l'objectif est de distinguer les tumeurs benignes des tumeurs malignes. Le projet utilise le jeu de donnees Breast Cancer Wisconsin Diagnostic, expose dans `scikit-learn` et provenant du UCI Machine Learning Repository.
+Le cancer du sein est un cas d'usage classique de classification binaire : a partir de mesures cytologiques ordinales, l'objectif est de distinguer les tumeurs benignes des tumeurs malignes. Le projet utilise le jeu de donnees **Breast Cancer Wisconsin Original** provenant du UCI Machine Learning Repository. Contrairement a la version `scikit-learn` deja nettoyee, cette version est plus brute : elle n'a pas d'en-tetes, contient un identifiant patient, une cible codee `2/4`, et des valeurs manquantes encodees par `?`.
 
 ### Objectif metier
 
@@ -537,13 +570,14 @@ L'objectif metier est de fournir une aide a la decision pour prioriser les cas p
 
 ### Source
 
-- `sklearn.datasets.load_breast_cancer`
-- Documentation scikit-learn : https://scikit-learn.org/stable/modules/generated/sklearn.datasets.load_breast_cancer.html
-- Source originale : UCI Machine Learning Repository, Breast Cancer Wisconsin Diagnostic : https://archive.ics.uci.edu/dataset/17/breast+cancer+wisconsin+diagnostic
+- Fichier brut local : `data/raw/breast-cancer-wisconsin.data`
+- Source officielle : UCI Machine Learning Repository, Breast Cancer Wisconsin Original : https://archive.ics.uci.edu/dataset/15/breast+cancer+wisconsin+original
+- Fichier de donnees UCI : https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/breast-cancer-wisconsin.data
+- Miroir Kaggle possible : https://www.kaggle.com/datasets/zzero0/uci-breast-cancer-wisconsin-original/data
 
 ### Description
 
-Le jeu de donnees contient {eda_summary["n_rows"]} observations et {eda_summary["n_features"]} variables explicatives numeriques. La cible a ete recodee en `target_malignant`, avec `1 = malignant` et `0 = benign` pour aligner les metriques de classification sur le risque metier.
+Le jeu de donnees contient {eda_summary["n_rows"]} observations et {eda_summary["n_features"]} variables explicatives ordinales notees de 1 a 10. La cible originale est codee `2 = benign` et `4 = malignant`; elle a ete recodee en `target_malignant`, avec `1 = malignant` et `0 = benign` pour aligner les metriques de classification sur le risque metier.
 
 Repartition des classes :
 
@@ -551,19 +585,21 @@ Repartition des classes :
 
 ### Limitations
 
-- L'echantillon est limite : 569 observations ne suffisent pas a valider un usage clinique reel.
-- Les donnees sont propres et deja structurees, donc le projet ne couvre pas les problemes frequents de donnees hospitalieres brutes.
+- L'echantillon est limite : {eda_summary["n_rows"]} observations ne suffisent pas a valider un usage clinique reel.
+- Les variables sont des scores cytologiques deja extraits : on ne travaille pas sur les images ou examens originaux.
+- Certaines valeurs sont manquantes et encodees par `?`, ce qui impose un nettoyage explicite.
+- L'identifiant patient ne doit pas etre utilise comme signal predictif.
 - Les observations proviennent d'un contexte precis ; une generalisation robuste demanderait une validation externe.
-- Les variables sont derivees d'images, mais les images originales ne sont pas disponibles ici.
 
 ## 3. Analyse exploratoire des donnees
 
 ### Points cles
 
-- Aucune valeur manquante n'a ete detectee dans les variables numeriques (`{eda_summary["missing_total"]}` valeurs manquantes).
+- Le fichier brut contient `{eda_summary["missing_total"]}` valeurs manquantes dans les variables explicatives. Variables concernees : {missing_features_text}.
+- `{eda_summary["duplicate_sample_ids"]}` lignes partagent un identifiant deja present, ce qui suggere des visites ou enregistrements multiples. L'identifiant est conserve dans les exports mais exclu des variables explicatives.
 - Les classes sont moderement desequilibrees : davantage de cas benins que malins.
 - Les variables les plus correlees a la malignite sont : {top_corr}.
-- Plusieurs variables de taille, concavite et texture separent visuellement les deux classes.
+- Plusieurs variables cytologiques, notamment l'uniformite cellulaire et les noyaux nus, separent visuellement les deux classes.
 
 ![Distribution des classes](../outputs/figures/01_distribution_classes.png)
 
@@ -579,12 +615,17 @@ Repartition des classes :
 
 - Verification des valeurs manquantes.
 - Separation stricte train/test stratifiee : {model_metadata["train_rows"]} lignes en entrainement et {model_metadata["test_rows"]} lignes en test.
-- Imputation mediane integree dans les pipelines, meme si aucune valeur manquante n'est observee, afin de rendre le pipeline robuste.
+- Conversion des `?` en valeurs manquantes `NaN`.
+- Conversion des colonnes ordinales en numerique.
+- Exclusion de `sample_code_number` des variables predictives pour eviter d'apprendre un identifiant.
+- Recodage de la cible `class` : `2 -> 0` et `4 -> 1`.
+- Imputation mediane integree dans les pipelines pour traiter `bare_nuclei` sans fuite de donnees.
 - Standardisation appliquee uniquement aux modeles sensibles aux echelles, dans un `Pipeline`, donc ajustee uniquement sur les folds d'entrainement pendant la validation croisee.
 
 ### Ingenierie des fonctionnalites
 
 - Reencodage de la cible pour faire de `malignant` la classe positive.
+- Conservation d'un fichier prepare dans `outputs/breast_cancer_wisconsin_original_prepared.csv` pour auditer le nettoyage.
 - PCA non supervisee pour regarder la structure des donnees, et PCA integree dans un modele `PCA + regression logistique`.
 - La reduction de dimension est placee apres le split et dans le pipeline lorsque le modele l'utilise, afin d'eviter les fuites de donnees.
 
@@ -684,7 +725,7 @@ KMeans retrouve partiellement la structure benign/malignant sans utiliser les la
 ### Limitations et travaux futurs
 
 - Le test set est petit : les scores peuvent varier selon l'echantillonnage.
-- Le dataset est pedagogique et deja nettoye ; un cas reel demanderait une gestion plus poussee de qualite, biais, valeurs aberrantes et derive temporelle.
+- Le dataset reste pedagogique meme s'il est plus brut que la version `scikit-learn`; un cas reel demanderait une gestion plus poussee de qualite, biais, valeurs aberrantes et derive temporelle.
 - Les recommandations ne constituent pas un avis medical.
 - Travaux futurs : calibration des probabilites, optimisation du seuil, validation externe, comparaison avec XGBoost/LightGBM si autorise, et analyse d'explicabilite plus complete.
 """
@@ -696,7 +737,7 @@ def main() -> dict[str, Any]:
     sns.set_theme(style="whitegrid", context="notebook")
 
     df, X, y, feature_names = load_data()
-    df.to_csv(OUTPUT_DIR / "breast_cancer_wisconsin_prepared.csv", index=False)
+    df.to_csv(OUTPUT_DIR / "breast_cancer_wisconsin_original_prepared.csv", index=False)
 
     eda_summary = run_eda(df, feature_names)
     cv_results, test_results, fitted_models, best_model_name, model_metadata = run_supervised_models(

@@ -1,15 +1,15 @@
 {
-  "train_rows": 455,
-  "test_rows": 114,
-  "best_model": "PCA + regression logistique",
+  "train_rows": 559,
+  "test_rows": 140,
+  "best_model": "Random Forest optimise",
   "best_params_random_forest": {
     "model__max_depth": null,
     "model__min_samples_leaf": 4,
     "model__n_estimators": 200
   },
-  "best_cv_recall_random_forest": 0.9529411764705882,
+  "best_cv_recall_random_forest": 0.9844804318488529,
   "test_class_counts": {
-    "0": 72,
-    "1": 42
+    "0": 92,
+    "1": 48
   }
 }

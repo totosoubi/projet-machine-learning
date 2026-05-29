@@ -1,10 +1,10 @@
 {
-  "pca_2_components_variance": 0.6313877765595589,
-  "pca_components_for_95_percent_variance": 10,
-  "kmeans_train_adjusted_rand_index": 0.6622066991321112,
-  "kmeans_test_adjusted_rand_index": 0.6169411122655668,
-  "kmeans_train_normalized_mutual_info": 0.5403921739486305,
-  "kmeans_test_normalized_mutual_info": 0.5037397294806727,
-  "kmeans_train_silhouette": 0.3432356203274449,
-  "kmeans_test_silhouette": 0.3173877785996526
+  "pca_2_components_variance": 0.7424716335583398,
+  "pca_components_for_95_percent_variance": 7,
+  "kmeans_train_adjusted_rand_index": 0.8137808224690448,
+  "kmeans_test_adjusted_rand_index": 0.8068227391142332,
+  "kmeans_train_normalized_mutual_info": 0.7057408533667778,
+  "kmeans_test_normalized_mutual_info": 0.6953264283090362,
+  "kmeans_train_silhouette": 0.574095466814427,
+  "kmeans_test_silhouette": 0.5802500992393685
 }

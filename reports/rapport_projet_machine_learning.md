@@ -4,7 +4,7 @@
 
 ### Contexte
 
-Le cancer du sein est un cas d'usage classique de classification binaire : a partir de mesures numeriques calculees sur des noyaux cellulaires, l'objectif est de distinguer les tumeurs benignes des tumeurs malignes. Le projet utilise le jeu de donnees Breast Cancer Wisconsin Diagnostic, expose dans `scikit-learn` et provenant du UCI Machine Learning Repository.
+Le cancer du sein est un cas d'usage classique de classification binaire : a partir de mesures cytologiques ordinales, l'objectif est de distinguer les tumeurs benignes des tumeurs malignes. Le projet utilise le jeu de donnees **Breast Cancer Wisconsin Original** provenant du UCI Machine Learning Repository. Contrairement a la version `scikit-learn` deja nettoyee, cette version est plus brute : elle n'a pas d'en-tetes, contient un identifiant patient, une cible codee `2/4`, et des valeurs manquantes encodees par `?`.
 
 ### Objectif metier
 
@@ -14,36 +14,39 @@ L'objectif metier est de fournir une aide a la decision pour prioriser les cas p
 
 ### Source
 
-- `sklearn.datasets.load_breast_cancer`
-- Documentation scikit-learn : https://scikit-learn.org/stable/modules/generated/sklearn.datasets.load_breast_cancer.html
-- Source originale : UCI Machine Learning Repository, Breast Cancer Wisconsin Diagnostic : https://archive.ics.uci.edu/dataset/17/breast+cancer+wisconsin+diagnostic
+- Fichier brut local : `data/raw/breast-cancer-wisconsin.data`
+- Source officielle : UCI Machine Learning Repository, Breast Cancer Wisconsin Original : https://archive.ics.uci.edu/dataset/15/breast+cancer+wisconsin+original
+- Fichier de donnees UCI : https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/breast-cancer-wisconsin.data
+- Miroir Kaggle possible : https://www.kaggle.com/datasets/zzero0/uci-breast-cancer-wisconsin-original/data
 
 ### Description
 
-Le jeu de donnees contient 569 observations et 30 variables explicatives numeriques. La cible a ete recodee en `target_malignant`, avec `1 = malignant` et `0 = benign` pour aligner les metriques de classification sur le risque metier.
+Le jeu de donnees contient 699 observations et 9 variables explicatives ordinales notees de 1 a 10. La cible originale est codee `2 = benign` et `4 = malignant`; elle a ete recodee en `target_malignant`, avec `1 = malignant` et `0 = benign` pour aligner les metriques de classification sur le risque metier.
 
 Repartition des classes :
 
 | diagnosis | count | percentage |
 | --- | --- | --- |
-| benign | 357 | 0.6274165202108963 |
-| malignant | 212 | 0.37258347978910367 |
+| benign | 458 | 0.6552217453505007 |
+| malignant | 241 | 0.3447782546494993 |
 
 ### Limitations
 
-- L'echantillon est limite : 569 observations ne suffisent pas a valider un usage clinique reel.
-- Les donnees sont propres et deja structurees, donc le projet ne couvre pas les problemes frequents de donnees hospitalieres brutes.
+- L'echantillon est limite : 699 observations ne suffisent pas a valider un usage clinique reel.
+- Les variables sont des scores cytologiques deja extraits : on ne travaille pas sur les images ou examens originaux.
+- Certaines valeurs sont manquantes et encodees par `?`, ce qui impose un nettoyage explicite.
+- L'identifiant patient ne doit pas etre utilise comme signal predictif.
 - Les observations proviennent d'un contexte precis ; une generalisation robuste demanderait une validation externe.
-- Les variables sont derivees d'images, mais les images originales ne sont pas disponibles ici.
 
 ## 3. Analyse exploratoire des donnees
 
 ### Points cles
 
-- Aucune valeur manquante n'a ete detectee dans les variables numeriques (`0` valeurs manquantes).
+- Le fichier brut contient `16` valeurs manquantes dans les variables explicatives. Variables concernees : bare_nuclei: 16.
+- `54` lignes partagent un identifiant deja present, ce qui suggere des visites ou enregistrements multiples. L'identifiant est conserve dans les exports mais exclu des variables explicatives.
 - Les classes sont moderement desequilibrees : davantage de cas benins que malins.
-- Les variables les plus correlees a la malignite sont : worst concave points (0.794), worst perimeter (0.783), mean concave points (0.777), worst radius (0.776), mean perimeter (0.743), worst area (0.734), mean radius (0.730), mean area (0.709).
-- Plusieurs variables de taille, concavite et texture separent visuellement les deux classes.
+- Les variables les plus correlees a la malignite sont : bare_nuclei (0.823), uniformity_cell_shape (0.819), uniformity_cell_size (0.818), bland_chromatin (0.757), clump_thickness (0.716), normal_nucleoli (0.712), marginal_adhesion (0.697), single_epithelial_cell_size (0.683).
+- Plusieurs variables cytologiques, notamment l'uniformite cellulaire et les noyaux nus, separent visuellement les deux classes.
 
 ![Distribution des classes](../outputs/figures/01_distribution_classes.png)
 
@@ -58,13 +61,18 @@ Repartition des classes :
 ### Nettoyage
 
 - Verification des valeurs manquantes.
-- Separation stricte train/test stratifiee : 455 lignes en entrainement et 114 lignes en test.
-- Imputation mediane integree dans les pipelines, meme si aucune valeur manquante n'est observee, afin de rendre le pipeline robuste.
+- Separation stricte train/test stratifiee : 559 lignes en entrainement et 140 lignes en test.
+- Conversion des `?` en valeurs manquantes `NaN`.
+- Conversion des colonnes ordinales en numerique.
+- Exclusion de `sample_code_number` des variables predictives pour eviter d'apprendre un identifiant.
+- Recodage de la cible `class` : `2 -> 0` et `4 -> 1`.
+- Imputation mediane integree dans les pipelines pour traiter `bare_nuclei` sans fuite de donnees.
 - Standardisation appliquee uniquement aux modeles sensibles aux echelles, dans un `Pipeline`, donc ajustee uniquement sur les folds d'entrainement pendant la validation croisee.
 
 ### Ingenierie des fonctionnalites
 
 - Reencodage de la cible pour faire de `malignant` la classe positive.
+- Conservation d'un fichier prepare dans `outputs/breast_cancer_wisconsin_original_prepared.csv` pour auditer le nettoyage.
 - PCA non supervisee pour regarder la structure des donnees, et PCA integree dans un modele `PCA + regression logistique`.
 - La reduction de dimension est placee apres le split et dans le pipeline lorsque le modele l'utilise, afin d'eviter les fuites de donnees.
 
@@ -101,25 +109,25 @@ Cette combinaison couvre des familles complementaires : lineaire, distance, marg
 
 | model | cv_accuracy_mean | cv_recall_malignant_mean | cv_f1_malignant_mean | cv_roc_auc_mean |
 | --- | --- | --- | --- | --- |
-| Regression logistique | 0.971 | 0.959 | 0.962 | 0.995 |
-| SVM RBF | 0.969 | 0.953 | 0.958 | 0.995 |
-| PCA + regression logistique | 0.967 | 0.953 | 0.956 | 0.994 |
-| Random Forest optimise | 0.958 | 0.953 | 0.945 | 0.988 |
-| Gradient Boosting | 0.967 | 0.947 | 0.955 | 0.991 |
-| Random Forest | 0.963 | 0.941 | 0.949 | 0.989 |
-| K plus proches voisins | 0.969 | 0.929 | 0.957 | 0.986 |
+| SVM RBF | 0.968 | 0.985 | 0.955 | 0.985 |
+| Random Forest optimise | 0.973 | 0.984 | 0.962 | 0.990 |
+| Regression logistique | 0.971 | 0.964 | 0.959 | 0.994 |
+| Random Forest | 0.970 | 0.964 | 0.956 | 0.992 |
+| PCA + regression logistique | 0.970 | 0.959 | 0.956 | 0.995 |
+| K plus proches voisins | 0.970 | 0.959 | 0.956 | 0.993 |
+| Gradient Boosting | 0.957 | 0.943 | 0.938 | 0.989 |
 
 ### Comparaison sur l'ensemble de test
 
 | model | accuracy | precision_malignant | recall_malignant | specificity_benign | f1_malignant | roc_auc |
 | --- | --- | --- | --- | --- | --- | --- |
-| PCA + regression logistique | 0.974 | 0.953 | 0.976 | 0.972 | 0.965 | 0.997 |
-| SVM RBF | 0.982 | 0.976 | 0.976 | 0.986 | 0.976 | 0.995 |
-| Regression logistique | 0.974 | 0.976 | 0.952 | 0.986 | 0.964 | 0.995 |
-| Random Forest | 0.974 | 1.000 | 0.929 | 1.000 | 0.963 | 0.997 |
-| Random Forest optimise | 0.974 | 1.000 | 0.929 | 1.000 | 0.963 | 0.997 |
-| Gradient Boosting | 0.965 | 1.000 | 0.905 | 1.000 | 0.950 | 0.995 |
-| K plus proches voisins | 0.956 | 0.974 | 0.905 | 0.986 | 0.938 | 0.982 |
+| Random Forest optimise | 0.964 | 0.922 | 0.979 | 0.957 | 0.949 | 0.991 |
+| SVM RBF | 0.957 | 0.920 | 0.958 | 0.957 | 0.939 | 0.987 |
+| Regression logistique | 0.957 | 0.938 | 0.938 | 0.967 | 0.938 | 0.995 |
+| PCA + regression logistique | 0.957 | 0.938 | 0.938 | 0.967 | 0.938 | 0.995 |
+| Gradient Boosting | 0.957 | 0.938 | 0.938 | 0.967 | 0.938 | 0.993 |
+| Random Forest | 0.957 | 0.938 | 0.938 | 0.967 | 0.938 | 0.991 |
+| K plus proches voisins | 0.950 | 0.918 | 0.938 | 0.957 | 0.928 | 0.977 |
 
 ![Comparaison modeles](../outputs/figures/05_comparaison_modeles.png)
 
@@ -131,14 +139,14 @@ Cette combinaison couvre des familles complementaires : lineaire, distance, marg
 
 ### Interpretation des resultats
 
-Le meilleur modele selon la regle metier est **PCA + regression logistique**. Sur l'ensemble de test, il obtient :
+Le meilleur modele selon la regle metier est **Random Forest optimise**. Sur l'ensemble de test, il obtient :
 
-- Accuracy : 0.974
-- Precision malignant : 0.953
-- Recall malignant : 0.976
-- Specificite benign : 0.972
-- F1 malignant : 0.965
-- ROC AUC : 0.997
+- Accuracy : 0.964
+- Precision malignant : 0.922
+- Recall malignant : 0.979
+- Specificite benign : 0.957
+- F1 malignant : 0.949
+- ROC AUC : 0.991
 
 Le rappel eleve indique que le modele limite fortement le risque de manquer des cas malins sur le test. L'AUC ROC permet aussi de verifier que le modele classe globalement bien les observations, au-dela d'un seuil fixe.
 
@@ -158,11 +166,11 @@ La Random Forest optimisee a ete reglee avec :
 
 La PCA et KMeans ont ete ajustes uniquement sur l'ensemble d'entrainement.
 
-- Variance expliquee par les 2 premieres composantes PCA : 0.631
-- Nombre de composantes necessaires pour 95% de variance expliquee : 10
-- ARI KMeans sur train : 0.662
-- ARI KMeans sur test : 0.617
-- Silhouette KMeans sur train : 0.343
+- Variance expliquee par les 2 premieres composantes PCA : 0.742
+- Nombre de composantes necessaires pour 95% de variance expliquee : 7
+- ARI KMeans sur train : 0.814
+- ARI KMeans sur test : 0.807
+- Silhouette KMeans sur train : 0.574
 
 KMeans retrouve partiellement la structure benign/malignant sans utiliser les labels, ce qui confirme qu'une partie du signal est visible dans l'espace des variables. Le score ARI reste imparfait, donc le clustering ne remplace pas la classification supervisee.
 
@@ -176,7 +184,7 @@ KMeans retrouve partiellement la structure benign/malignant sans utiliser les la
 
 ### Recommandations
 
-- Utiliser **PCA + regression logistique** comme modele candidat, car il maximise le rappel de la classe maligne tout en conservant de bonnes performances globales.
+- Utiliser **Random Forest optimise** comme modele candidat, car il maximise le rappel de la classe maligne tout en conservant de bonnes performances globales.
 - En contexte medical, ajuster le seuil de decision avec les experts metier pour controler explicitement le compromis faux negatifs / faux positifs.
 - Completer cette analyse par une validation externe sur un autre centre ou une periode differente avant toute utilisation operationnelle.
 - Conserver les pipelines `scikit-learn` pour garantir la reproductibilite et limiter les fuites de donnees.
@@ -184,6 +192,6 @@ KMeans retrouve partiellement la structure benign/malignant sans utiliser les la
 ### Limitations et travaux futurs
 
 - Le test set est petit : les scores peuvent varier selon l'echantillonnage.
-- Le dataset est pedagogique et deja nettoye ; un cas reel demanderait une gestion plus poussee de qualite, biais, valeurs aberrantes et derive temporelle.
+- Le dataset reste pedagogique meme s'il est plus brut que la version `scikit-learn`; un cas reel demanderait une gestion plus poussee de qualite, biais, valeurs aberrantes et derive temporelle.
 - Les recommandations ne constituent pas un avis medical.
 - Travaux futurs : calibration des probabilites, optimisation du seuil, validation externe, comparaison avec XGBoost/LightGBM si autorise, et analyse d'explicabilite plus complete.
