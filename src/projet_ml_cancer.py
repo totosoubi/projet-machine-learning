@@ -35,7 +35,7 @@ from sklearn.metrics import (
     roc_curve,
     silhouette_score,
 )
-from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_validate, train_test_split
+from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_predict, cross_validate, train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -237,12 +237,15 @@ def specificity_score(y_true: pd.Series | np.ndarray, y_pred: np.ndarray) -> flo
     return tn / (tn + fp)
 
 
+def positive_scores(model: Pipeline, X: pd.DataFrame) -> np.ndarray:
+    if hasattr(model, "predict_proba"):
+        return model.predict_proba(X)[:, 1]
+    return model.decision_function(X)
+
+
 def evaluate_model(model: Pipeline, X_test: pd.DataFrame, y_test: pd.Series) -> dict[str, float]:
     y_pred = model.predict(X_test)
-    if hasattr(model, "predict_proba"):
-        y_score = model.predict_proba(X_test)[:, 1]
-    else:
-        y_score = model.decision_function(X_test)
+    y_score = positive_scores(model, X_test)
 
     return {
         "accuracy": accuracy_score(y_test, y_pred),
@@ -252,6 +255,80 @@ def evaluate_model(model: Pipeline, X_test: pd.DataFrame, y_test: pd.Series) -> 
         "f1_malignant": f1_score(y_test, y_pred, zero_division=0),
         "roc_auc": roc_auc_score(y_test, y_score),
     }
+
+
+def metrics_at_threshold(y_true: pd.Series | np.ndarray, y_score: np.ndarray, threshold: float) -> dict[str, float]:
+    y_pred = (y_score >= threshold).astype(int)
+    return {
+        "threshold": float(threshold),
+        "accuracy": accuracy_score(y_true, y_pred),
+        "precision_malignant": precision_score(y_true, y_pred, zero_division=0),
+        "recall_malignant": recall_score(y_true, y_pred, zero_division=0),
+        "specificity_benign": specificity_score(y_true, y_pred),
+        "f1_malignant": f1_score(y_true, y_pred, zero_division=0),
+    }
+
+
+def run_threshold_analysis(
+    best_model: Pipeline,
+    best_model_name: str,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_test: pd.DataFrame,
+    y_test: pd.Series,
+    cv: StratifiedKFold,
+) -> dict[str, Any]:
+    oof_scores = cross_val_predict(
+        clone(best_model),
+        X_train,
+        y_train,
+        cv=cv,
+        method="predict_proba",
+        n_jobs=1,
+    )[:, 1]
+
+    thresholds = np.round(np.arange(0.05, 0.96, 0.05), 2)
+    threshold_results = pd.DataFrame([metrics_at_threshold(y_train, oof_scores, t) for t in thresholds])
+    threshold_results.to_csv(TABLE_DIR / "threshold_analysis_train_oof.csv", index=False)
+
+    viable = threshold_results[threshold_results["recall_malignant"] >= 0.98]
+    if viable.empty:
+        selected_row = threshold_results.sort_values(
+            ["f1_malignant", "recall_malignant", "specificity_benign"], ascending=False
+        ).iloc[0]
+        selection_rule = "meilleur F1 hors-fold, aucun seuil avec rappel >= 0.98"
+    else:
+        selected_row = viable.sort_values(["f1_malignant", "specificity_benign"], ascending=False).iloc[0]
+        selection_rule = "rappel malignant >= 0.98 puis meilleur F1 hors-fold"
+
+    selected_threshold = float(selected_row["threshold"])
+    test_scores = positive_scores(best_model, X_test)
+    test_at_threshold = metrics_at_threshold(y_test, test_scores, selected_threshold)
+
+    plt.figure(figsize=(8, 5))
+    for metric in ["precision_malignant", "recall_malignant", "specificity_benign", "f1_malignant"]:
+        plt.plot(threshold_results["threshold"], threshold_results[metric], marker="o", label=metric)
+    plt.axvline(selected_threshold, color="#c44e52", linestyle="--", label=f"seuil retenu = {selected_threshold:.2f}")
+    plt.ylim(0, 1.03)
+    plt.xlabel("Seuil de decision")
+    plt.ylabel("Score hors-fold sur l'entrainement")
+    plt.title(f"Analyse du seuil de decision - {best_model_name}")
+    plt.legend(fontsize=8)
+    save_fig(FIGURE_DIR / "12_analyse_seuil.png")
+
+    summary = {
+        "model": best_model_name,
+        "selection_rule": selection_rule,
+        "selected_threshold": selected_threshold,
+        "train_oof_metrics_at_selected_threshold": {
+            key: float(value) for key, value in selected_row.to_dict().items()
+        },
+        "test_metrics_at_selected_threshold": {
+            key: float(value) for key, value in test_at_threshold.items()
+        },
+    }
+    (TABLE_DIR / "threshold_selected.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return summary
 
 
 def tune_random_forest(X_train: pd.DataFrame, y_train: pd.Series, feature_names: list[str]) -> GridSearchCV:
@@ -288,7 +365,7 @@ def tune_random_forest(X_train: pd.DataFrame, y_train: pd.Series, feature_names:
 
 def run_supervised_models(
     X: pd.DataFrame, y: pd.Series, feature_names: list[str]
-) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Pipeline], str, dict[str, Any]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Pipeline], str, dict[str, Any], dict[str, Any]]:
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y
     )
@@ -341,6 +418,7 @@ def run_supervised_models(
     plot_confusion_matrices(fitted_models, X_test, y_test)
     plot_roc_curves(fitted_models, X_test, y_test)
     feature_importance(best_model, best_model_name, X_test, y_test, feature_names)
+    threshold_summary = run_threshold_analysis(best_model, best_model_name, X_train, y_train, X_test, y_test, cv)
 
     metadata = {
         "train_rows": int(X_train.shape[0]),
@@ -352,7 +430,7 @@ def run_supervised_models(
     }
     (TABLE_DIR / "model_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    return cv_results, test_results, fitted_models, str(best_model_name), metadata
+    return cv_results, test_results, fitted_models, str(best_model_name), metadata, threshold_summary
 
 
 def plot_model_comparison(test_results: pd.DataFrame) -> None:
@@ -544,9 +622,11 @@ def build_report(
     best_model_name: str,
     model_metadata: dict[str, Any],
     unsupervised_metrics: dict[str, Any],
+    threshold_summary: dict[str, Any],
 ) -> None:
     best_row = test_results[test_results["model"] == best_model_name].iloc[0]
     top_corr = ", ".join([f"{feature} ({value:.3f})" for feature, value in eda_summary["top_correlations"].items()])
+    threshold_test = threshold_summary["test_metrics_at_selected_threshold"]
 
     missing_features_text = (
         ", ".join([f"{feature}: {int(count)}" for feature, count in eda_summary["missing_features"].items()])
@@ -555,6 +635,14 @@ def build_report(
     )
 
     report = f"""# Projet Machine Learning - Classification de tumeurs mammaires
+
+## Resume executif
+
+Ce projet resout une classification binaire de tumeurs mammaires a partir du dataset brut **Breast Cancer Wisconsin Original**. Le fichier source contient 699 observations, 9 variables explicatives ordinales, une cible codee `2/4`, un identifiant patient exclu du modele, et 16 valeurs manquantes encodees par `?`.
+
+Le meilleur modele selon la priorite metier est **{best_model_name}**. Au seuil standard de `0.50`, il obtient sur l'ensemble de test un rappel malignant de {format_float(best_row["recall_malignant"])}, un F1 malignant de {format_float(best_row["f1_malignant"])} et une AUC ROC de {format_float(best_row["roc_auc"])}.
+
+Une analyse de seuil hors-fold sur l'entrainement recommande un seuil de `{threshold_summary["selected_threshold"]:.2f}` selon la regle : {threshold_summary["selection_rule"]}. Applique au test, ce seuil donne un rappel malignant de {format_float(threshold_test["recall_malignant"])} et une precision malignant de {format_float(threshold_test["precision_malignant"])}. En pratique, ce seuil devrait etre valide avec des experts metier avant usage operationnel.
 
 ## 1. Probleme
 
@@ -666,6 +754,24 @@ Cette combinaison couvre des familles complementaires : lineaire, distance, marg
 
 {markdown_table(test_results, ["model", "accuracy", "precision_malignant", "recall_malignant", "specificity_benign", "f1_malignant", "roc_auc"])}
 
+### Analyse du seuil de decision
+
+Le seuil par defaut `0.50` n'est pas toujours optimal dans un contexte medical. Une analyse de seuil a donc ete realisee sur des predictions hors-fold de l'ensemble d'entrainement, afin de limiter le risque de choisir le seuil directement sur le test. La regle appliquee est : {threshold_summary["selection_rule"]}.
+
+Seuil recommande : `{threshold_summary["selected_threshold"]:.2f}`.
+
+Performances sur le test avec ce seuil :
+
+| metrique | valeur |
+| --- | --- |
+| accuracy | {format_float(threshold_test["accuracy"])} |
+| precision_malignant | {format_float(threshold_test["precision_malignant"])} |
+| recall_malignant | {format_float(threshold_test["recall_malignant"])} |
+| specificity_benign | {format_float(threshold_test["specificity_benign"])} |
+| f1_malignant | {format_float(threshold_test["f1_malignant"])} |
+
+![Analyse seuil](../outputs/figures/12_analyse_seuil.png)
+
 ![Comparaison modeles](../outputs/figures/05_comparaison_modeles.png)
 
 ![Matrices de confusion](../outputs/figures/06_matrices_confusion.png)
@@ -685,7 +791,7 @@ Le meilleur modele selon la regle metier est **{best_model_name}**. Sur l'ensemb
 - F1 malignant : {format_float(best_row["f1_malignant"])}
 - ROC AUC : {format_float(best_row["roc_auc"])}
 
-Le rappel eleve indique que le modele limite fortement le risque de manquer des cas malins sur le test. L'AUC ROC permet aussi de verifier que le modele classe globalement bien les observations, au-dela d'un seuil fixe.
+Le rappel eleve au seuil standard indique que le modele limite fortement le risque de manquer des cas malins sur le test. L'AUC ROC permet aussi de verifier que le modele classe globalement bien les observations, au-dela d'un seuil fixe. L'analyse de seuil montre que l'on peut ajuster explicitement le compromis entre faux negatifs et faux positifs selon la tolerance metier.
 
 La Random Forest optimisee a ete reglee avec :
 
@@ -740,15 +846,25 @@ def main() -> dict[str, Any]:
     df.to_csv(OUTPUT_DIR / "breast_cancer_wisconsin_original_prepared.csv", index=False)
 
     eda_summary = run_eda(df, feature_names)
-    cv_results, test_results, fitted_models, best_model_name, model_metadata = run_supervised_models(
+    cv_results, test_results, fitted_models, best_model_name, model_metadata, threshold_summary = run_supervised_models(
         X, y, feature_names
     )
     unsupervised_metrics = run_unsupervised_analysis(X, y, feature_names)
-    build_report(eda_summary, cv_results, test_results, best_model_name, model_metadata, unsupervised_metrics)
+    build_report(
+        eda_summary,
+        cv_results,
+        test_results,
+        best_model_name,
+        model_metadata,
+        unsupervised_metrics,
+        threshold_summary,
+    )
 
     summary = {
         "best_model": best_model_name,
         "best_test_metrics": test_results[test_results["model"] == best_model_name].iloc[0].to_dict(),
+        "selected_threshold": threshold_summary["selected_threshold"],
+        "test_metrics_at_selected_threshold": threshold_summary["test_metrics_at_selected_threshold"],
         "report": str(REPORT_PATH.relative_to(ROOT)),
         "model": str((MODEL_DIR / "best_model.joblib").relative_to(ROOT)),
     }

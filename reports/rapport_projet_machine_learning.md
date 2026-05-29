@@ -1,5 +1,13 @@
 # Projet Machine Learning - Classification de tumeurs mammaires
 
+## Resume executif
+
+Ce projet resout une classification binaire de tumeurs mammaires a partir du dataset brut **Breast Cancer Wisconsin Original**. Le fichier source contient 699 observations, 9 variables explicatives ordinales, une cible codee `2/4`, un identifiant patient exclu du modele, et 16 valeurs manquantes encodees par `?`.
+
+Le meilleur modele selon la priorite metier est **Random Forest optimise**. Au seuil standard de `0.50`, il obtient sur l'ensemble de test un rappel malignant de 0.979, un F1 malignant de 0.949 et une AUC ROC de 0.991.
+
+Une analyse de seuil hors-fold sur l'entrainement recommande un seuil de `0.50` selon la regle : rappel malignant >= 0.98 puis meilleur F1 hors-fold. Applique au test, ce seuil donne un rappel malignant de 0.979 et une precision malignant de 0.922. En pratique, ce seuil devrait etre valide avec des experts metier avant usage operationnel.
+
 ## 1. Probleme
 
 ### Contexte
@@ -129,6 +137,24 @@ Cette combinaison couvre des familles complementaires : lineaire, distance, marg
 | Random Forest | 0.957 | 0.938 | 0.938 | 0.967 | 0.938 | 0.991 |
 | K plus proches voisins | 0.950 | 0.918 | 0.938 | 0.957 | 0.928 | 0.977 |
 
+### Analyse du seuil de decision
+
+Le seuil par defaut `0.50` n'est pas toujours optimal dans un contexte medical. Une analyse de seuil a donc ete realisee sur des predictions hors-fold de l'ensemble d'entrainement, afin de limiter le risque de choisir le seuil directement sur le test. La regle appliquee est : rappel malignant >= 0.98 puis meilleur F1 hors-fold.
+
+Seuil recommande : `0.50`.
+
+Performances sur le test avec ce seuil :
+
+| metrique | valeur |
+| --- | --- |
+| accuracy | 0.964 |
+| precision_malignant | 0.922 |
+| recall_malignant | 0.979 |
+| specificity_benign | 0.957 |
+| f1_malignant | 0.949 |
+
+![Analyse seuil](../outputs/figures/12_analyse_seuil.png)
+
 ![Comparaison modeles](../outputs/figures/05_comparaison_modeles.png)
 
 ![Matrices de confusion](../outputs/figures/06_matrices_confusion.png)
@@ -148,7 +174,7 @@ Le meilleur modele selon la regle metier est **Random Forest optimise**. Sur l'e
 - F1 malignant : 0.949
 - ROC AUC : 0.991
 
-Le rappel eleve indique que le modele limite fortement le risque de manquer des cas malins sur le test. L'AUC ROC permet aussi de verifier que le modele classe globalement bien les observations, au-dela d'un seuil fixe.
+Le rappel eleve au seuil standard indique que le modele limite fortement le risque de manquer des cas malins sur le test. L'AUC ROC permet aussi de verifier que le modele classe globalement bien les observations, au-dela d'un seuil fixe. L'analyse de seuil montre que l'on peut ajuster explicitement le compromis entre faux negatifs et faux positifs selon la tolerance metier.
 
 La Random Forest optimisee a ete reglee avec :
 

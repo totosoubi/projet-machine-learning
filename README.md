@@ -13,6 +13,7 @@ Le projet respecte les contraintes demandees :
 - Methode non supervisee : PCA et KMeans.
 - Pipeline propre avec split train/test stratifie, imputation dans `Pipeline`, preprocessing dans `Pipeline`, validation croisee et absence de fuite de donnees.
 - Comparaison de plusieurs modeles.
+- Analyse du seuil de decision pour expliciter le compromis faux negatifs / faux positifs.
 - Rapport structure selon les sections demandees.
 
 ## Structure
@@ -23,6 +24,7 @@ Le projet respecte les contraintes demandees :
 - `reports/rapport_projet_machine_learning.md` : rapport final en francais.
 - `outputs/figures/` : graphiques EDA, evaluation, PCA et clustering.
 - `outputs/tables/` : resultats CSV/JSON.
+- `outputs/breast_cancer_wisconsin_original_prepared.csv` : export prepare et auditable.
 - `models/best_model.joblib` : meilleur modele sauvegarde.
 
 ## Execution
